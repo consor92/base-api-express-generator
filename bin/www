@@ -7,6 +7,7 @@ const debug = require('debug')('base-api-express-generator:server')
 const http = require('http')
 const figlet = require('figlet')
 const mongoose = require('mongoose')
+const sequelize = require('../config/MySql');
 const pkg = require('../package.json')
 
 const env_path = process.env.NODE_ENV ? `.env.${process.env.NODE_ENV}` : '.env'
@@ -23,12 +24,27 @@ const db_url = process.env.MONGO_URL || 'mongodb://127.0.0.1:27017/'
 const db_name = process.env.MONGO_DB || 'test'
 
 // MongoDB database initialization
-initDatabase()
+initMongoDatabase()
   .then(() => console.log('Database connection established successfully!'))
   .catch((err) => console.log(err))
 
-async function initDatabase() {
+// Sincronizar la base de datos y arrancar el servidor
+initSQLDatabase()
+  .then(() => console.log('Database connection established successfully!'))
+  .catch((err) => console.log(err))
+
+
+  
+async function initMongoDatabase() {
   await mongoose.connect(db_url + db_name)
+}
+
+//El método sync({ alter: true }) actualiza la base de datos para que coincida con el modelo sin eliminar los datos existentes. 
+//Usa { force: true } si deseas borrar y recrear la base de datos.
+async function initSQLDatabase() {
+  // Conecta y sincroniza la base de datos
+  await sequelize.authenticate(); // Conecta a la base de datos
+  await sequelize.sync({ alter: true }); // Sincroniza los modelos con la base de datos
 }
 
 // Listen on provided port, on all network interfaces.
@@ -78,3 +94,5 @@ function printTitle() {
     process.stdout.write(`Listening on port ${port}\n`)
   }
 }
+
+

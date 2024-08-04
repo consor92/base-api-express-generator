@@ -280,7 +280,7 @@ async function iniciarMongo(req, res, next) {
     // Pasa cualquier error al middleware de manejo de errores
     next(err)
   }
-})
+}
 
 
 

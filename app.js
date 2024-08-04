@@ -4,6 +4,7 @@ const cookieParser = require('cookie-parser') // Middleware para analizar cookie
 const logger = require('morgan') // Middleware para registrar solicitudes HTTP
 const cors = require('cors') // Middleware para habilitar CORS (Cross-Origin Resource Sharing)
 
+
 // Importa los routers y middlewares personalizados
 const statusRouter = require('./routes/status') // Router para manejar rutas relacionadas con el estado del servidor
 const authRouter = require('./routes/auth') // Router para manejar rutas de autenticación
