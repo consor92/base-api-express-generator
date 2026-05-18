@@ -1,246 +1,417 @@
-// Importa el módulo Express para manejar rutas HTTP
+// =========================================================================
+// IMPORTACIÓN DE DEPENDENCIAS Y MÓDULOS
+// =========================================================================
+
+// Importa el framework Express para la gestión de rutas y peticiones HTTP
 const express = require('express')
 
-// Importa la biblioteca bcrypt para manejar el hashing de contraseñas
+// Importa Bcrypt, una librería para encriptar (hashing) contraseñas de forma segura
 const bcrypt = require('bcrypt')
 
-// Importa el modelo de usuario para interactuar con la colección de usuarios en la base de datos
+// Importa el modelo de Mongoose 'User' que representa la colección de usuarios en MongoDB
 const User = require('../schemas/user')
 
-// Importa el modelo de rol para interactuar con la colección de roles en la base de datos
+// Importa el modelo de Mongoose 'Role' que representa la colección de roles en MongoDB
 const Role = require('../schemas/role')
 
-// Crea una nueva instancia de Router para definir rutas relacionadas con usuarios
+// Inicializa el Router de Express para empaquetar y exportar este grupo de rutas de forma modular
 const router = express.Router()
 
-// Define las rutas y asigna las funciones de controlador correspondientes
+// =========================================================================
+// DEFINICIÓN DE ENRUTAMIENTO (ENDPOINTS)
+// Asocia un método HTTP y una URL con su función controladora correspondiente
+// =========================================================================
+
+// GET / -> Obtiene la lista completa de usuarios activos. Requiere permisos de Admin.
+router.get('/', getAllUsers)         
+
+// GET /:id -> Obtiene un usuario específico mediante su ID en la URL. Accesible por Admin o el propio usuario.
+router.get('/:id', getUserById)      
+
+// POST / -> Crea un nuevo usuario en el sistema (Registro).
+router.post('/', createUser)         
+
+// PUT /:id -> Actualiza/Reemplaza por completo los datos de un usuario por su ID.
+router.put('/:id', updateUser)       
+
+// PATCH /:id -> Actualiza de manera parcial solo los campos enviados de un usuario por su ID.
+router.patch('/:id', patchUser)      
+
+// DELETE /:id -> Elimina de forma permanente un usuario del sistema por su ID. Solo permitido para Admins.
+router.delete('/:id', deleteUser)    
+
+// GET /iniciarMongo -> Ruta utilitaria encargada de poblar (seed) la base de datos con roles y un admin inicial.
 router.get('/iniciarMongo', iniciarMongo)
-router.get('/', getAllUsers)         // Ruta para obtener todos los usuarios activos
-router.get('/:id', getUserById)      // Ruta para obtener un usuario específico por ID
 
-router.post('/', createUser)         // Ruta para crear un nuevo usuario
-router.put('/:id', updateUser)       // Ruta para actualizar un usuario específico por ID
-router.delete('/:id', deleteUser)    // Ruta para eliminar un usuario específico por ID
-router.patch('/:id', patchUser)
 
-// Controlador para obtener todos los usuarios activos
+// =========================================================================
+// CONTROLADORES: LÓGICA DE NEGOCIO Y MANEJO DE PETICIONES
+// =========================================================================
+
+/**
+ * 1. OBTENER TODOS LOS USUARIOS
+ * @route GET /
+ * @access Privado (Solo Administradores)
+ */
 async function getAllUsers(req, res, next) {
-  console.log('getAllUsers by user ', req.user._id) // Registra el ID del usuario que está realizando la solicitud
+  // CONTROL DE ACCESO: Verifica si el método personalizado 'req.isAdmin()' inyectado por el middleware devuelve false.
+  // Si no es administrador, corta la ejecución inmediatamente y devuelve un código 403 (Prohibido/Forbidden).
+  if (!req.isAdmin || !req.isAdmin()) {
+    return res.status(403).json({
+      status: 403,
+      error: 'Forbidden',
+      message: 'No tienes permisos (Admin) para ver la lista completa de usuarios.'
+    })
+  }
+
   try {
-    // Busca todos los usuarios activos en la colección 'users' y realiza un populate en el campo 'role'
-    // El método find() busca documentos que coincidan con el criterio de búsqueda ({ isActive: true })
-    // El método populate() reemplaza el campo 'role' con el documento completo del rol
-    const users = await User.find({ isActive: true }).populate('role')
-    res.send(users) // Envía la lista de usuarios como respuesta
+    // CONSULTA BASE DE DATOS: 
+    // - .find({ isActive: true }) -> Filtra y trae solo los usuarios cuyo estado sea activo.
+    // - .populate('role') -> Mongoose busca en la colección de roles el documento cuyo ID coincida y lo incrusta.
+    // - .select('-password') -> EXCLUSIÓN DE SEGURIDAD: Indica que traiga todos los campos MENOS la contraseña encriptada.
+    const users = await User.find({ isActive: true }).populate('role').select('-password')
+    
+    // RESPUESTA EXITOSA: Devuelve un estado 200 (OK) junto con el arreglo de usuarios en formato JSON.
+    return res.status(200).json(users)
   } catch (err) {
-    next(err) // Pasa el error al siguiente middleware de manejo de errores
+    // MANEJO DE ERRORES: Si ocurre un fallo del servidor (ej: pérdida de conexión a BD), se envía al middleware global de errores.
+    return next(err)
   }
 }
 
-// Controlador para obtener un usuario específico por ID
+/**
+ * 2. OBTENER UN USUARIO POR SU ID
+ * @route GET /:id
+ * @access Privado (Admin o el propio Dueño de la cuenta)
+ */
 async function getUserById(req, res, next) {
-  console.log('getUser with id: ', req.params.id) // Registra el ID del usuario solicitado
+  // Extrae el parámetro 'id' de la URL (ej: /users/65f1a2b3... -> id = '65f1a2b3...')
+  const { id } = req.params
 
-  if (!req.params.id) {
-    return res.status(500).send('The param id is not defined') // Envía un error 500 si el ID no está definido
+  // VALIDACIÓN DE ENTRADA: Si por alguna razón el ID viene vacío, es un error del cliente (400 Bad Request).
+  if (!id) {
+    return res.status(400).json({
+      status: 400,
+      error: 'Bad Request',
+      message: 'El parámetro ID es requerido en la URL.'
+    })
+  }
+
+  // CONTROL DE ACCESO: Un usuario con rol común ('client') SOLO puede ver sus propios datos (id de la URL === id de su sesión token).
+  // Si no es Admin Y el ID solicitado no coincide con su ID autenticado, se le deniega el acceso (403 Forbidden).
+  if (!req.isAdmin() && id != req.user._id) {
+    return res.status(403).json({
+      status: 403,
+      error: 'Forbidden',
+      message: 'No estás autorizado para consultar la información de este usuario.'
+    })
   }
 
   try {
-    // Busca el usuario por ID en la colección 'users' y realiza un populate en el campo 'role'
-    // El método findById() busca un documento que coincida con el ID proporcionado
-    const user = await User.findById(req.params.id).populate('role')
+    // CONSULTA BASE DE DATOS: Busca un único documento por su identificador único de MongoDB (_id).
+    // También aplicamos populate para el rol y excluimos la contraseña por privacidad.
+    const user = await User.findById(id).populate('role').select('-password')
 
+    // VALIDACIÓN DE EXISTENCIA: Si Mongoose devuelve 'null', significa que el ID tiene el formato correcto pero no existe el registro.
+    // Se responde con un estado 404 (Not Found).
     if (!user) {
-      return res.status(404).send('User not found') // Envía un error 404 si el usuario no se encuentra
+      return res.status(404).json({
+        status: 404,
+        error: 'Not Found',
+        message: 'El usuario con el ID especificado no existe.'
+      })
     }
 
-    res.send(user) // Envía el usuario encontrado como respuesta
+    // RESPUESTA EXITOSA: Devuelve los datos del usuario encontrado con estado 200 (OK).
+    return res.status(200).json(user)
   } catch (err) {
-    next(err) // Pasa el error al siguiente middleware de manejo de errores
+    // Pasa cualquier error inesperado al gestor centralizado de errores de Express.
+    return next(err)
   }
 }
 
-// Controlador para crear un nuevo usuario
+/**
+ * 3. CREAR UN NUEVO USUARIO
+ * @route POST /
+ * @access Público / Privado
+ */
 async function createUser(req, res, next) {
-  console.log('createUser: ', req.body) // Registra la información del usuario a crear
-
-  const user = req.body
+  // Obtiene los datos enviados por el cliente desde el cuerpo de la petición (JSON)
+  const userData = req.body
 
   try {
-    // Busca el rol correspondiente al nombre del rol proporcionado en la colección 'roles'
-    // El método findOne() busca un único documento que coincida con el criterio de búsqueda
-    const role = await Role.findOne({ name: user.role })
+    // REGLA DE NEGOCIO: Si el cliente no especifica un rol en el JSON de registro, se le asigna por defecto el rol 'client'.
+    const roleName = userData.role || 'client'
+    
+    // CONSULTA BASE DE DATOS: Busca en la colección de roles el documento que coincida con el nombre del rol.
+    const role = await Role.findOne({ name: roleName })
+    
+    // VALIDACIÓN DE CONSISTENCIA: Si el rol buscado no existe en la base de datos, no podemos continuar. Error 404.
     if (!role) {
-      return res.status(404).send('Role not found') // Envía un error 404 si el rol no se encuentra
+      return res.status(404).json({
+        status: 404,
+        error: 'Not Found',
+        message: `El rol '${roleName}' no existe en el sistema.`
+      })
     }
 
-    // Hash de la contraseña del usuario con un salto de 10
-    // El método hash() toma la contraseña y la encripta usando un algoritmo de hashing
-    const passEncrypted = await bcrypt.hash(user.password, 10)
+    // ENCRIPCION DE SEGURIDAD: Toma la contraseña en texto plano y le aplica un algoritmo de hashing con 10 rondas de sal (salt).
+    // Esto asegura que si la base de datos es hackeada, las contraseñas de los usuarios permanezcan indescifrables.
+    const passEncrypted = await bcrypt.hash(userData.password, 10)
+    
+    // INSERCIÓN EN BASE DE DATOS: Crea y guarda de forma atómica el nuevo usuario en MongoDB.
+    // Usamos el operador spread (...userData) para clonar los campos recibidos, pero pisamos la contraseña con la encriptada 
+    // y vinculamos el campo 'role' con el ObjectId correspondiente del rol encontrado en la BD.
+    const userCreated = await User.create({ 
+      ...userData, 
+      password: passEncrypted, 
+      role: role._id 
+    })
 
-    // Crea el nuevo usuario en la colección 'users'
-    // El método create() crea y guarda un nuevo documento en la colección
-    const userCreated = await User.create({ ...user, password: passEncrypted, role: role._id })
+    // LIMPIEZA DE RESPUESTA: 'userCreated' es un documento complejo de Mongoose. Lo convertimos a un objeto nativo de JavaScript (.toObject())
+    // para poder eliminar de forma segura la propiedad 'password' antes de enviarla al cliente.
+    const userResponse = userCreated.toObject()
+    delete userResponse.password
 
-    res.send(userCreated) // Envía el usuario creado como respuesta
+    // RESPUESTA EXITOSA: 201 significa "Created" (Recurso creado con éxito en el servidor).
+    return res.status(201).json(userResponse)
+
   } catch (err) {
+    // CAPTURA DE ERRORES DE VALIDACIÓN (Mongoose Schema):
+    // Se ejecuta si fallan validaciones del esquema (ej: el email no tiene formato válido o falta un campo requerido como 'firstName').
     if (err.name === 'ValidationError') {
-      // Manejo de errores de validación (por ejemplo, datos requeridos faltantes)
-      // Los errores de validación son errores generados por Mongoose cuando los datos no cumplen con el esquema
+      // Extrae todos los mensajes de error configurados en el Schema y los mapea en un arreglo limpio.
       const validationErrors = Object.values(err.errors).map(e => e.message)
-      return res.status(400).json({ errors: validationErrors })
+      return res.status(400).json({
+        status: 400,
+        error: 'ValidationError',
+        message: 'Los datos enviados no cumplen con los requisitos mínimos.',
+        errors: validationErrors // Envía la lista detallada de qué campos fallaron
+      })
     }
-    if (err.code && err.code === 11000) {
-      // Manejo de errores de duplicación de clave (por ejemplo, email ya en uso)
-      // El código 11000 indica un error de duplicado en Mongoose, como un email que ya existe
-      return res.status(400).json({ error: 'Email ya está en uso' })
+    
+    // CAPTURA DE ERROR DE DUPLICIDAD (MongoDB):
+    // El código 11000 ocurre cuando se viola una restricción de índice único (ej: en el Schema de User se configuró 'email: { unique: true }').
+    if (err.code === 11000) {
+      return res.status(400).json({
+        status: 400,
+        error: 'Bad Request',
+        message: 'El correo electrónico ya se encuentra registrado por otro usuario.'
+      })
     }
-    next(err) // Pasa otros errores al siguiente middleware de manejo de errores
+    
+    // Deriva cualquier otro tipo de error al middleware general.
+    return next(err)
   }
 }
 
-// Controlador para actualizar un usuario existente
+/**
+ * 4. ACTUALIZAR USUARIO COMPLETO
+ * @route PUT /:id
+ * @access Privado (Admin o el propio Dueño de la cuenta)
+ */
 async function updateUser(req, res, next) {
-  console.log('updateUser with id: ', req.params.id) // Registra el ID del usuario a actualizar
+  const { id } = req.params
 
-  if (!req.params.id) {
-    return res.status(404).send('Parameter id not found') // Envía un error 404 si el ID no está definido
+  if (!id) {
+    return res.status(400).json({
+      status: 400,
+      error: 'Bad Request',
+      message: 'El parámetro ID es requerido.'
+    })
   }
 
-  // Verifica que el usuario sea un administrador o esté actualizando su propio perfil
-  if (!req.isAdmin() && req.params.id != req.user._id) {
-    return res.status(403).send('Unauthorized') // Envía un error 403 si el usuario no está autorizado
+  // CONTROL DE ACCESO: Impide que usuarios comunes editen perfiles ajenos (403 Forbidden).
+  if (!req.isAdmin() && id != req.user._id) {
+    return res.status(403).json({
+      status: 403,
+      error: 'Forbidden',
+      message: 'No tienes permisos para modificar este perfil.'
+    })
   }
 
-  // El correo electrónico no puede ser actualizado
-  delete req.body.email
+  // PROTECCIÓN DE DATOS CRÍTICOS (Escalada de privilegios): 
+  // Si el usuario que realiza la petición NO es administrador, eliminamos del cuerpo de la solicitud (`req.body`) los campos 
+  // 'email' y 'role'. Esto evita que un usuario común se cambie el correo a uno no verificado o se promueva a sí mismo a Admin.
+  if (!req.isAdmin()) {
+    delete req.body.email  
+    delete req.body.role   
+  }
 
   try {
-    // Busca el usuario por ID en la colección 'users'
-    // El método findById() busca un documento que coincida con el ID proporcionado
-    const userToUpdate = await User.findById(req.params.id)
-
+    // CONSULTA BASE DE DATOS: Busca si el usuario a modificar existe en la BD.
+    const userToUpdate = await User.findById(id)
     if (!userToUpdate) {
-      return res.status(404).send('User not found') // Envía un error 404 si el usuario no se encuentra
+      return res.status(404).json({
+        status: 404,
+        error: 'Not Found',
+        message: 'Usuario no encontrado.'
+      })
     }
 
-    // Si se proporciona un nuevo rol, verifica que el rol exista
+    // VALIDACIÓN DE ROL: Si un Administrador está cambiando el rol del usuario, verificamos primero que el ID del nuevo rol exista.
     if (req.body.role) {
       const newRole = await Role.findById(req.body.role)
-
       if (!newRole) {
-        return res.status(400).end() // Envía un error 400 si el nuevo rol no se encuentra
+        return res.status(400).json({
+          status: 400,
+          error: 'Bad Request',
+          message: 'El ID del nuevo rol proporcionado no es válido.'
+        })
       }
       req.body.role = newRole._id
     }
 
-    // Si se proporciona una nueva contraseña, realiza el hash de la contraseña
+    // ENCRIPCION DE CONTRASEÑA: Si el JSON de actualización incluye un cambio de contraseña, la encriptamos antes de impactar la BD.
     if (req.body.password) {
-      const passEncrypted = await bcrypt.hash(req.body.password, 10)
-      req.body.password = passEncrypted
+      req.body.password = await bcrypt.hash(req.body.password, 10)
     }
 
-    // Actualiza el usuario con los nuevos datos
-    // El método updateOne() actualiza un solo documento que coincide con el criterio de búsqueda
-    // También se podría usar save() para guardar los cambios en un documento existente
+    // MODIFICACIÓN EN BASE DE DATOS: Aplica los cambios provistos en req.body sobre el documento de manera directa.
     await userToUpdate.updateOne(req.body)
-    res.send(userToUpdate) // Envía el usuario actualizado como respuesta
+    
+    // RE-CONSULTA DE CONFIRMACIÓN: Volvemos a buscar el usuario recién actualizado para traer sus datos frescos y limpios, 
+    // resolviendo el objeto del rol actual y quitando el password de la respuesta.
+    const updatedUser = await User.findById(id).populate('role').select('-password')
+    
+    // RESPUESTA EXITOSA: Devuelve el usuario modificado con estado 200 (OK).
+    return res.status(200).json(updatedUser)
   } catch (err) {
-    next(err) // Pasa el error al siguiente middleware de manejo de errores
+    return next(err)
   }
 }
 
-// Controlador para eliminar un usuario existente
-async function deleteUser(req, res, next) {
-  console.log('deleteUser with id: ', req.params.id) // Registra el ID del usuario a eliminar
-
-  if (!req.params.id) {
-    return res.status(500).send('The param id is not defined') // Envía un error 500 si el ID no está definido
-  }
-
-  try {
-    // Busca el usuario por ID en la colección 'users'
-    const user = await User.findById(req.params.id)
-
-    if (!user) {
-      return res.status(404).send('User not found') // Envía un error 404 si el usuario no se encuentra
-    }
-
-    // Elimina el usuario por ID en la colección 'users'
-    // El método deleteOne() elimina un solo documento que coincide con el criterio de búsqueda
-    await User.deleteOne({ _id: user._id })
-
-    res.send(`User deleted :  ${req.params.id}`) // Envía un mensaje de éxito con el ID del usuario eliminado
-  } catch (err) {
-    next(err) // Pasa el error al siguiente middleware de manejo de errores
-  }
-}
-
+/**
+ * 5. MODIFICAR PARCIALMENTE UN USUARIO
+ * @route PATCH /:id
+ * @access Privado (Admin o el propio Dueño de la cuenta)
+ */
 async function patchUser(req, res, next) {
-  console.log('patchUser with id: ', req.params.id) // Registra el ID del usuario que se va a actualizar
+  const { id } = req.params
 
-  // Verifica que el parámetro 'id' esté presente en la solicitud
-  if (!req.params.id) {
-    return res.status(404).send('Parameter id not found') // Envía un error 404 si el ID no está definido
+  if (!id) {
+    return res.status(400).json({
+      status: 400,
+      error: 'Bad Request',
+      message: 'El parámetro ID es requerido.'
+    })
   }
 
-  // Verifica si el usuario tiene permisos para realizar la actualización
-  // Solo los administradores o el propio usuario pueden actualizar
-  if (!req.isAdmin() && req.params.id != req.user._id) {
-    return res.status(403).send('Unauthorized') // Envía un error 403 si el usuario no está autorizado
+  // CONTROL DE ACCESO
+  if (!req.isAdmin() && id != req.user._id) {
+    return res.status(403).json({
+      status: 403,
+      error: 'Forbidden',
+      message: 'No estás autorizado para modificar este perfil.'
+    })
+  }
+
+  // PROTECCIÓN DE SEGURIDAD: Evita modificaciones no permitidas a usuarios estándar.
+  if (!req.isAdmin()) {
+    delete req.body.email
+    delete req.body.role
   }
 
   try {
-    // Busca el usuario por ID usando el método findById de Mongoose
-    const userToUpdate = await User.findById(req.params.id)
-
-    // Verifica si el usuario existe en la base de datos
+    const userToUpdate = await User.findById(id)
     if (!userToUpdate) {
-      return res.status(404).send('User not found') // Envía un error 404 si el usuario no se encuentra
+      return res.status(404).json({
+        status: 404,
+        error: 'Not Found',
+        message: 'Usuario no encontrado.'
+      })
     }
 
-    // Usa Object.assign para actualizar el usuario con los datos proporcionados en req.body
-    // Solo los campos que están presentes en req.body se actualizarán
+    // LÓGICA DE FUSIÓN (PATCH): 'Object.assign' toma el documento original de Mongoose (userToUpdate) y sobrescribe en él 
+    // ÚNICAMENTE las propiedades que vienen dentro de 'req.body'. Las propiedades que no se enviaron quedan intactas.
     Object.assign(userToUpdate, req.body)
-
-    // Guarda los cambios en la base de datos usando el método save de Mongoose
+    
+    // GUARDADO EN BASE DE DATOS: Ejecuta el método .save() que dispara los hooks de validación interna de Mongoose.
     await userToUpdate.save()
 
-    // Envía el usuario actualizado como respuesta
-    res.send(userToUpdate) 
+    // Oculta la contraseña en la respuesta final de JS.
+    const response = userToUpdate.toObject()
+    delete response.password
+
+    return res.status(200).json(response)
   } catch (err) {
-    // Pasa el error al siguiente middleware de manejo de errores
-    next(err) 
+    return next(err)
   }
 }
 
+/**
+ * 6. ELIMINAR USUARIO
+ * @route DELETE /:id
+ * @access Privado (Estrictamente Administradores)
+ */
+async function deleteUser(req, res, next) {
+  const { id } = req.params
 
+  // CONTROL DE ACCESO CRÍTICO: Eliminar un recurso del sistema es una acción destructiva de alto nivel.
+  // Por ende, restringimos esta funcionalidad de manera estricta para que ningún cliente pueda auto-eliminarse o eliminar a otros.
+  if (!req.isAdmin || !req.isAdmin()) {
+    return res.status(403).json({
+      status: 403,
+      error: 'Forbidden',
+      message: 'Acceso denegado. Solo los administradores pueden eliminar usuarios.'
+    })
+  }
 
+  if (!id) {
+    return res.status(400).json({
+      status: 400,
+      error: 'Bad Request',
+      message: 'El parámetro ID es requerido.'
+    })
+  }
 
-  
-async function iniciarMongo(req, res, next) {
   try {
-    // Define los roles predeterminados
-    const roles = [
-      { name: 'admin', description: 'Administrator with full access' },
-      { name: 'client', description: 'Regular client with limited access' },
-      { name: 'guest', description: 'Guest user with read-only access' }
-    ]
-
-    // Crea los roles en la base de datos si no existen
-    for (const roleData of roles) {
-      // Usa el método `findOne` para verificar si el rol ya existe
-      let role = await Role.findOne({ name: roleData.name })
-      if (!role) {
-        // Crea el rol si no existe
-        role = await Role.create(roleData)
-        console.log(`Role created: ${role.name}`)
-      } else {
-        console.log(`Role already exists: ${role.name}`)
-      }
+    const user = await User.findById(id)
+    // Si no existe el usuario a eliminar, informamos al cliente con un 404 (No encontrado).
+    if (!user) {
+      return res.status(404).json({
+        status: 404,
+        error: 'Not Found',
+        message: 'El usuario que intentas eliminar no existe.'
+      })
     }
 
-    // Define los usuarios predeterminados
+    // ELIMINACIÓN DE LA BASE DE DATOS: Remueve de manera permanente el documento coincidente de la colección.
+    await User.deleteOne({ _id: user._id })
+    
+    // RESPUESTA ESTÁNDAR DE ÉXITO: En lugar de retornar datos vacíos, devolvemos un JSON descriptivo con el ID borrado y la hora.
+    return res.status(200).json({
+      status: 200,
+      message: 'El usuario ha sido eliminado correctamente del sistema.',
+      deletedId: id,
+      timestamp: new Date()
+    })
+  } catch (err) {
+    return next(err)
+  }
+}
+
+/**
+ * 7. INICIALIZAR LA BASE DE DATOS (SEEDER)
+ * @route GET /iniciarMongo
+ * @access Público / Utilitario
+ */
+async function iniciarMongo(req, res, next) {
+  try {
+    // Define la estructura base de los roles obligatorios de la aplicación.
+    const roles = [
+      { name: 'admin', description: 'Administrator with full access' },
+      { name: 'client', description: 'Regular client with limited access' }
+    ]
+
+    // BUCLE DE POBLACIÓN: Recorre el arreglo de roles y verifica uno a uno si ya existen en la base de datos.
+    for (const roleData of roles) {
+      let role = await Role.findOne({ name: roleData.name })
+      // Si no existe el rol, lo crea en ese instante. Si existe, lo ignora para no duplicar datos.
+      if (!role) await Role.create(roleData)
+    }
+
+    // Define un usuario Administrador inicial para poder ingresar al sistema por primera vez.
     const users = [
       {
         email: 'admin@baseapinode.com',
@@ -249,40 +420,33 @@ async function iniciarMongo(req, res, next) {
         lastName: 'BaseApiNode',
         role: 'admin',
         isActive: true
-      },
-      {
-        email: 'client@baseapinode.com',
-        password: 'Password1',
-        firstName: 'Client',
-        lastName: 'BaseApiNode',
-        role: 'client',
-        isActive: true
       }
     ]
 
-    // Crea los usuarios en la base de datos
+    // BUCLE DE POBLACIÓN DE USUARIOS:
     for (const userData of users) {
-      // Verifica si el usuario ya existe por email
       let user = await User.findOne({ email: userData.email })
       if (!user) {
-        // Encripta la contraseña del usuario antes de guardarla
+        // Encripta la contraseña por defecto del administrador
         const passEncrypted = await bcrypt.hash(userData.password, 10)
-        user = await User.create({ ...userData, password: passEncrypted })
-        console.log(`User created: ${user.email}`)
-      } else {
-        console.log(`User already exists: ${user.email}`)
+        
+        // Busca el ID real asignado por MongoDB para el rol 'admin' creado en el paso anterior.
+        const adminRole = await Role.findOne({ name: 'admin' })
+        
+        // Inserta el usuario vinculando correctamente el ObjectId del rol de administrador.
+        await User.create({ ...userData, password: passEncrypted, role: adminRole._id })
       }
     }
 
-    // Envía una respuesta de éxito
-    res.status(200).send('Database initialized with roles and users')
+    // Devuelve un JSON de éxito informando que el sistema ya cuenta con datos para operar.
+    return res.status(200).json({ 
+      status: 200,
+      message: 'Base de datos inicializada con éxito con roles y usuarios por defecto.' 
+    })
   } catch (err) {
-    // Pasa cualquier error al middleware de manejo de errores
-    next(err)
+    return next(err)
   }
 }
 
-
-
-// Exporta el router para que pueda ser utilizado en otras partes de la aplicación
+// Exporta el módulo del router completamente configurado para que la aplicación principal (app.js) pueda mapearlo bajo la ruta '/users'
 module.exports = router
