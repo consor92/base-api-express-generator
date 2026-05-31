@@ -137,23 +137,52 @@ app.use(express.static(path.join(__dirname, 'public')));.
 
 💻 Scripts Disponibles
 En el directorio del proyecto, puedes ejecutar los siguientes comandos:
-
+```bash
 npm run dev: Inicia el servidor en modo desarrollo utilizando Nodemon (se reiniciará automáticamente al guardar cambios).
-
 npm start: Inicia el servidor en modo producción.
-
 npm run format: Aplica las reglas de Prettier a todos los archivos del proyecto para unificar el estilo de código.
-
 npm run lint: Analiza el código buscando errores de sintaxis y malas prácticas utilizando ESLint.
+```
 
-📁 Estructura del Proyecto
-Plaintext
+## 📁 Estructura del Proyecto
+
+Esta es la organización de los directorios y archivos principales del proyecto:
+
+### 📂 Carpetas (Directorios)
+* **`bin/`**: Contiene el archivo de arranque del servidor (por ejemplo, `www`).
+* **`config/`**: Configuraciones de la base de datos o servicios externos.
+* **`middlewares/`**: Funciones intermedias (por ejemplo, verificación de tokens o roles).
+* **`migration/`**: Archivos con el historial de cambios de la base de datos.
+* **`model/`**: Definiciones de los esquemas y tablas de la base de datos.
+* **`routes/`**: Definición de los endpoints y rutas de la API.
+* **`schemas/`**: Validaciones de datos de entrada (payloads de peticiones).
+* **`utils/`**: Herramientas y funciones auxiliares reutilizables.
+
+### 📄 Archivos Principales
+* **`app.js`**: Configuración principal de la aplicación Express y sus middlewares.
+* **`.env`**: Variables de entorno y contraseñas secretas (no se sube al repositorio).
+* **`.eslintignore`**: Archivos y carpetas que el linter no debe analizar.
+* **`.prettierrc`**: Reglas de formato visual del código para mantener consistencia.
+* **`README.md`**: Documentación principal del proyecto.
+* **`migrate-mongo-config.js`**: Configuración de conexión para las migraciones de MongoDB.
+* **`package.json`**: Registro de dependencias, información del proyecto y scripts de ejecución.
+
+### 🌳 Árbol del Proyecto
+
+```text
 .
 ├── bin/
-│   └── www             # Punto de entrada HTTP y configuración del puerto
-├── routes/             # Definición de rutas de la API
-├── app.js              # Configuración principal de Express y Middlewares
-├── package.json        # Dependencias y scripts
-├── .env                # Variables de entorno secretas
-├── .eslintrc.json      # Configuración del linter
-└── .prettierrc         # Configuración del formateador
+├── config/
+├── middlewares/
+├── migration/
+├── model/
+├── routes/
+├── schemas/
+├── utils/
+├── app.js
+├── .env
+├── .eslintignore
+├── .prettierrc
+├── README.md
+├── migrate-mongo-config.js
+└── package.json
